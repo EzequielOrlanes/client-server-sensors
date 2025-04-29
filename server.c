@@ -4,12 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h> 
 
 #include <sys/socket.h>
 #include <sys/types.h>
 
 #define BUFSZ 500
 #define TAM 100
+#define MSG_SIZE 256
 
 #define INS_REQ "INS_REQ"
 #define REM_REQ "REM_REQ"
@@ -20,8 +22,31 @@
 #define VAL_RES "VAL_RES"
 #define ERROR "ERROR"
 
+typedef enum {
+    MSG_REQUEST,
+    MSG_RESPONSE,
+    MSG_RESULT,
+    MSG_PLAY_AGAIN_REQUEST,
+    MSG_PLAY_AGAIN_RESPONSE,
+    MSG_ERROR,
+    MSG_END
+    } MessageType;
+
+typedef struct {
+        int type; // Tipo da mensagem
+        int client_action;
+        int server_action;
+        int result;
+        int client_wins;
+        int server_wins;
+        char message[MSG_SIZE];
+} GameMessage;
+        
+
+
+
 void usage(int argc, char **argv)
-{
+{   //It's necessary use command 'make' before type commands below.
     printf("usage: %s <v4|v6> <server port>\n", argv[0]);
     printf("example: %s v4 51511\n", argv[0]);
     exit(EXIT_FAILURE);
@@ -52,6 +77,11 @@ int result_potency(int tension, int current)
     int result;
     result = (tension * current);
     return result;
+}
+
+int aleatory(){
+    srand(time(NULL));
+    return (rand() % 6);
 }
 
 int main(int argc, char **argv)

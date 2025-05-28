@@ -86,38 +86,37 @@ int main(int argc, char *argv[]) {
         usage(argc, argv);
     }
 
-    int sock;
-    sock = socket(storage.ss_family, SOCK_STREAM, 0);
-    if (sock == -1)
+    int sock_connect;
+    sock_connect = socket(storage.ss_family, SOCK_STREAM, 0);
+    if (sock_connect == -1)
     {
         logexit("socket");
     }
 
     int enable = 1;
-    if (0 != setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)))
+    if (0 != setsockopt(sock_connect, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)))
     {
         logexit("setsockopt");
     }
 
     struct sockaddr *addr = (struct sockaddr *)(&storage);
-    if (0 != bind(sock, addr, sizeof(storage))){
+    if (0 != bind(sock_connect, addr, sizeof(storage))){
         logexit("bind");
     }
 
-    if (0 != listen(sock, 10)){
+    if (0 != listen(sock_connect, 10)){
         logexit("listen");
     }
 
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
 
-// init:
 
     printf("bound to %s, waiting connections\n", addrstr);
     struct sockaddr_storage cstorage;
     struct sockaddr *caddr = (struct sockaddr *)(&cstorage);
     socklen_t caddrlen = sizeof(cstorage);
-    int sock = accept(sock, caddr, &caddrlen);
+    int sock = accept(sock_connect, caddr, &caddrlen);
     if (sock == -1)
     {
         logexit("accept");
@@ -126,20 +125,16 @@ int main(int argc, char *argv[]) {
     char caddrstr[BUFSZ];
     addrtostr(caddr, caddrstr, BUFSZ);
     printf("[log] connection from %s\n", caddrstr);
-    // char ip_version[10];
     int client_wins = 0, server_wins = 0;
 
 
     while (1) {
-        printf("Entrou aqui Server");
-//  goto init;
         GameMessage msg = {0};
         // Solicita jogada
         msg.type = MSG_REQUEST;
         send_message(sock, &msg);
-
         // Recebe jogada
-        if (receive_message(sock, &msg) <= 0) printf("UI");
+        if (receive_message(sock, &msg) <= 0) break;
         if (msg.client_action < 0 || msg.client_action > 4) {
             msg.type = MSG_ERROR;
             snprintf(msg.message, MSG_SIZE, "Por favor, selecione um valor de 0 a 4.");
@@ -159,13 +154,13 @@ int main(int argc, char *argv[]) {
         print_action(server_action, server_str);
 
         if (result == 1) {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\nServidor escolheu: %s\nResultado: Vitória!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\nResultado: Vitória!", client_str, server_str);
             client_wins++;
         } else if (result == 0) {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\nServidor escolheu: %s\nResultado: Derrota!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\nResultado: Derrota!", client_str, server_str);
             server_wins++;
         } else {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\nServidor escolheu: %s\nResultado: Empate!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\nResultado: Empate!", client_str, server_str);
         }
 
         msg.client_wins = client_wins;
@@ -178,7 +173,7 @@ int main(int argc, char *argv[]) {
         msg.type = MSG_PLAY_AGAIN_REQUEST;
         send_message(sock, &msg);
 
-        if (receive_message(sock, &msg) <= 0) printf("receu");
+        if (receive_message(sock, &msg) <= 0) break;
         if (msg.type != MSG_PLAY_AGAIN_RESPONSE || (msg.result != 0 && msg.result != 1)) {
             msg.type = MSG_ERROR;
             snprintf(msg.message, MSG_SIZE, "Por favor, digite 1 para jogar novamente ou 0 para encerrar.");
@@ -188,15 +183,14 @@ int main(int argc, char *argv[]) {
 
         if (msg.result == 0) {
             msg.type = MSG_END;
-            snprintf(msg.message, MSG_SIZE, "Fim de jogo!\nPlacar final: Você %d x %d Servidor\nObrigado por jogar!", client_wins, server_wins);
+            snprintf(msg.message, MSG_SIZE, "Fim de jogo!\n Placar final: Você %d x %d Servidor\n Obrigado por jogar!", client_wins, server_wins);
             msg.client_wins = client_wins;
             msg.server_wins = server_wins;
             send_message(sock, &msg);
-            // break;
+         break;
         }
     }
-
-    // close(sock);
+    close(sock);
     printf("Cliente desconectado.\n");
-    // return 0;
+    return 0;
 }

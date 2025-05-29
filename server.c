@@ -6,12 +6,11 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
-#include <stdbool.h>
 #include "common.h"
 
 #define BUFSZ 500
-#define B127CKLOG 1
 #define MSG_SIZE 256
+#define EQUAL 100
 
 typedef enum {
     MSG_REQUEST,
@@ -35,15 +34,15 @@ typedef struct {
 
 
 int determine_result(int client_action, int server_action) {
-    if (client_action == server_action) return -1;
+    if (client_action == server_action) return EQUAL;
     switch (client_action) {
         case 0: return (server_action == 2 || server_action == 3) ? 1 : 0;
         case 1: return (server_action == 0 || server_action == 4) ? 1 : 0;
         case 2: return (server_action == 1 || server_action == 3) ? 1 : 0;
         case 3: return (server_action == 1 || server_action == 4) ? 1 : 0;
         case 4: return (server_action == 0 || server_action == 2) ? 1 : 0;
-        default: return 0;
     }
+    return 0;
 }
 
 void send_message(int sock, GameMessage *msg) {
@@ -52,7 +51,6 @@ void send_message(int sock, GameMessage *msg) {
 
 int receive_message(int sock, GameMessage *msg) {
     return recv(sock, msg, sizeof(GameMessage), 0);
-   
 }
 
 void print_action(int action, char *buf) {
@@ -64,6 +62,11 @@ void print_action(int action, char *buf) {
     else strcpy(buf, "Invalid");
 }
 
+void printf_invalid_opt(){
+    fprintf(stderr, "Erro: opção inválida de jogada.\n");
+};
+
+
 void usage(int argc, char **argv){
     printf("usage: %s <v4|v6> <server port>\n", argv[0]);
     printf("example: %s v4 51511\n", argv[0]);
@@ -71,54 +74,40 @@ void usage(int argc, char **argv){
 }
 
 
-
 int main(int argc, char *argv[]) {
 
-
- if (argc < 3)
-    {
+    if (argc < 3){
         usage(argc, argv);
     }
 
     struct sockaddr_storage storage;
-    if (0 != server_sockaddr_init(argv[1], argv[2], &storage))
-    {
+
+    if (0 != server_sockaddr_init(argv[1], argv[2], &storage)){
         usage(argc, argv);
     }
 
     int sock_connect;
     sock_connect = socket(storage.ss_family, SOCK_STREAM, 0);
-    if (sock_connect == -1)
-    {
-        logexit("socket");
-    }
-
+    int opt = 0;
+    setsockopt(sock_connect, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)); 
+    if (sock_connect == -1) logexit("socket");
     int enable = 1;
-    if (0 != setsockopt(sock_connect, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)))
-    {
-        logexit("setsockopt");
-    }
 
+    if (0 != setsockopt(sock_connect, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) logexit("setsockopt");
+    
     struct sockaddr *addr = (struct sockaddr *)(&storage);
-    if (0 != bind(sock_connect, addr, sizeof(storage))){
-        logexit("bind");
-    }
-
-    if (0 != listen(sock_connect, 10)){
-        logexit("listen");
-    }
+    if (0 != bind(sock_connect, addr, sizeof(storage))) logexit("bind");
+    if (0 != listen(sock_connect, 10)) logexit("listen");
 
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
-
 
     printf("bound to %s, waiting connections\n", addrstr);
     struct sockaddr_storage cstorage;
     struct sockaddr *caddr = (struct sockaddr *)(&cstorage);
     socklen_t caddrlen = sizeof(cstorage);
     int sock = accept(sock_connect, caddr, &caddrlen);
-    if (sock == -1)
-    {
+    if (sock == -1){
         logexit("accept");
     }
 
@@ -127,7 +116,6 @@ int main(int argc, char *argv[]) {
     printf("[log] connection from %s\n", caddrstr);
     int client_wins = 0, server_wins = 0;
 
-
     while (1) {
         GameMessage msg = {0};
         // Solicita jogada
@@ -135,13 +123,16 @@ int main(int argc, char *argv[]) {
         send_message(sock, &msg);
         // Recebe jogada
         if (receive_message(sock, &msg) <= 0) break;
+        fprintf(stderr, "Cliente escolheu %d.\n", msg.client_action);
         if (msg.client_action < 0 || msg.client_action > 4) {
+            printf_invalid_opt();
             msg.type = MSG_ERROR;
             snprintf(msg.message, MSG_SIZE, "Por favor, selecione um valor de 0 a 4.");
             send_message(sock, &msg);
             continue;
         }
 
+        //select random number between 0 and 5 has server action.
         int server_action = rand() % 5;
         int result = determine_result(msg.client_action, server_action);
 
@@ -152,15 +143,14 @@ int main(int argc, char *argv[]) {
         char client_str[32], server_str[32];
         print_action(msg.client_action, client_str);
         print_action(server_action, server_str);
-
         if (result == 1) {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\nResultado: Vitória!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Vitória!", client_str, server_str);
             client_wins++;
         } else if (result == 0) {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\nResultado: Derrota!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Derrota!", client_str, server_str);
             server_wins++;
-        } else {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\nResultado: Empate!", client_str, server_str);
+        } else if (result == EQUAL){
+            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Empate!", client_str, server_str);
         }
 
         msg.client_wins = client_wins;
@@ -169,7 +159,7 @@ int main(int argc, char *argv[]) {
 
         if (result == -1) continue;
 
-        // Jogar novamente?
+        // Play again
         msg.type = MSG_PLAY_AGAIN_REQUEST;
         send_message(sock, &msg);
 

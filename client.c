@@ -47,7 +47,8 @@ void print_menu() {
     printf("2 - Cyber Attack \n");
     printf("3 - Drone Strike \n");
     printf("4 - Bio Attack \n");
-    printf(">> ");
+    printf("\n");
+    printf("$ ");
     fflush(stdout);
 }
 
@@ -82,15 +83,15 @@ int main(int argc, char *argv[]) {
             scanf("%d", &escolha);
             msg.type = MSG_RESPONSE;
             msg.client_action = escolha;
-            printf("Escolha %d", escolha);
             send_message(sock, &msg);
         }
         else if (msg.type == MSG_RESULT) {
             printf("\n %s \n", msg.message);
         }
         else if (msg.type == MSG_PLAY_AGAIN_REQUEST) {
-            printf("Deseja jogar novamente? Sim: [ 1 ] - Não: [ 0 ] >>");
+            printf("Deseja jogar novamente? \n1 - Sim \n0 - Nao \n");
             int again;
+            printf("$ ");
             scanf("%d", &again);
             msg.type = MSG_PLAY_AGAIN_RESPONSE;
             msg.result = again;

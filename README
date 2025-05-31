@@ -1,4 +1,5 @@
 - TO RUN:
+        ---pratical mode
         0. Any terminal: make
 
         1. terminal 1: ./server v4 51551 or ./server v6 51511

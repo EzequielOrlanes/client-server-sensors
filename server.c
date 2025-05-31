@@ -54,18 +54,23 @@ int receive_message(int sock, GameMessage *msg) {
 }
 
 void print_action(int action, char *buf) {
-    const char *actions[] = {
-        "Nuclear Attack", "Intercept Attack", "Cyber Attack",
-        "Drone Strike", "Bio Attack"
+    char * possible_actions[] = {
+        "Nuclear Attack", 
+        "Intercept Attack",
+        "Cyber Attack",
+        "Drone Strike",
+        "Bio Attack"
     };
-    if (action >= 0 && action <= 4) strcpy(buf, actions[action]);
-    else strcpy(buf, "Invalid");
+    if (action >= 0 && action <= 4){
+        strcpy(buf, possible_actions[action]);
+    } else {
+            strcpy(buf, "Invalid");
+      }
 }
 
 void printf_invalid_opt(){
     fprintf(stderr, "Erro: opção inválida de jogada.\n");
 };
-
 
 void usage(int argc, char **argv){
     printf("usage: %s <v4|v6> <server port>\n", argv[0]);
@@ -73,15 +78,11 @@ void usage(int argc, char **argv){
     exit(EXIT_FAILURE);
 }
 
-
 int main(int argc, char *argv[]) {
-
     if (argc < 3){
         usage(argc, argv);
     }
-
     struct sockaddr_storage storage;
-
     if (0 != server_sockaddr_init(argv[1], argv[2], &storage)){
         usage(argc, argv);
     }
@@ -91,18 +92,34 @@ int main(int argc, char *argv[]) {
     int opt = 0;
     setsockopt(sock_connect, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)); 
     if (sock_connect == -1) logexit("socket");
-    int enable = 1;
 
+    int enable = 1;
     if (0 != setsockopt(sock_connect, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) logexit("setsockopt");
-    
+
     struct sockaddr *addr = (struct sockaddr *)(&storage);
     if (0 != bind(sock_connect, addr, sizeof(storage))) logexit("bind");
     if (0 != listen(sock_connect, 10)) logexit("listen");
 
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
+    char protocol[10]; // "IPv4" ou "IPv6"
+    int port = 0;
 
-    printf("bound to %s, waiting connections\n", addrstr);
+    if (addr->sa_family == AF_INET) {
+        // IPv4
+        struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
+        port = ntohs(addr4->sin_port);
+        strcpy(protocol, "IPv4");
+    } else if (addr->sa_family == AF_INET6) {
+        // IPv6
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)addr;
+        port = ntohs(addr6->sin6_port);
+        strcpy(protocol, "IPv6");
+    } else {
+        strcpy(protocol, "Unknown");
+    }
+
+    printf("Servido iniciado em modo %s, na porta %d aguardando conexão...\n", protocol, port);
     struct sockaddr_storage cstorage;
     struct sockaddr *caddr = (struct sockaddr *)(&cstorage);
     socklen_t caddrlen = sizeof(cstorage);
@@ -110,11 +127,10 @@ int main(int argc, char *argv[]) {
     if (sock == -1){
         logexit("accept");
     }
-
-    char caddrstr[BUFSZ];
-    addrtostr(caddr, caddrstr, BUFSZ);
-    printf("[log] connection from %s\n", caddrstr);
-    int client_wins = 0, server_wins = 0;
+    printf("Cliente conectado.\n");
+    printf("Apresentando as opções para o cliente.\n");
+    int client_wins = 0; 
+    int server_wins = 0;
 
     while (1) {
         GameMessage msg = {0};
@@ -127,13 +143,14 @@ int main(int argc, char *argv[]) {
         if (msg.client_action < 0 || msg.client_action > 4) {
             printf_invalid_opt();
             msg.type = MSG_ERROR;
-            snprintf(msg.message, MSG_SIZE, "Por favor, selecione um valor de 0 a 4.");
+            snprintf(msg.message, MSG_SIZE, "Por favor, selecione um valor de 0 a 4.\n");
             send_message(sock, &msg);
             continue;
         }
 
-        //select random number between 0 and 5 has server action.
+        //select random number between 0 and 5 as server action.
         int server_action = rand() % 5;
+        printf("Servidor escolheu aleatoriamente %d\n", server_action);
         int result = determine_result(msg.client_action, server_action);
 
         msg.type = MSG_RESULT;
@@ -144,26 +161,32 @@ int main(int argc, char *argv[]) {
         print_action(msg.client_action, client_str);
         print_action(server_action, server_str);
         if (result == 1) {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Vitória!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE,"Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Vitória!\n", client_str, server_str);
             client_wins++;
         } else if (result == 0) {
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Derrota!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE,"Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Derrota!\n", client_str, server_str);
             server_wins++;
         } else if (result == EQUAL){
-            snprintf(msg.message, MSG_SIZE, "Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Empate!", client_str, server_str);
+            snprintf(msg.message, MSG_SIZE,"Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Empate!\n", client_str, server_str);
         }
+
+        if(result == EQUAL) printf("Empate.\n");
 
         msg.client_wins = client_wins;
         msg.server_wins = server_wins;
+        fprintf(stderr, "Placar atualizado: Cliente %d x %d Servidor\n", client_wins, server_wins);
+        printf("Perguntando se o cliente deseja jogar novamente.\n");
         send_message(sock, &msg);
 
         if (result == -1) continue;
 
-        // Play again
+        // Plays again option choose. 
         msg.type = MSG_PLAY_AGAIN_REQUEST;
         send_message(sock, &msg);
 
         if (receive_message(sock, &msg) <= 0) break;
+        printf("Solicitando ao cliente mais uma escolha.\n");
+
         if (msg.type != MSG_PLAY_AGAIN_RESPONSE || (msg.result != 0 && msg.result != 1)) {
             msg.type = MSG_ERROR;
             snprintf(msg.message, MSG_SIZE, "Por favor, digite 1 para jogar novamente ou 0 para encerrar.");
@@ -172,6 +195,8 @@ int main(int argc, char *argv[]) {
         }
 
         if (msg.result == 0) {
+            printf("Cliente não deseja jogar novamente.\n");
+            printf("Enviando placar final.\n");
             msg.type = MSG_END;
             snprintf(msg.message, MSG_SIZE, "Fim de jogo!\n Placar final: Você %d x %d Servidor\n Obrigado por jogar!", client_wins, server_wins);
             msg.client_wins = client_wins;

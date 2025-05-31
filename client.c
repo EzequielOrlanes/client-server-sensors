@@ -5,7 +5,7 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include "common.h"
-#include <stdbool.h>
+#include <stdbool.h> //bool true or false
 #include "common.h"
 
 #define MSG_SIZE 256
@@ -49,7 +49,7 @@ void print_menu() {
     printf("4 - Bio Attack \n");
     printf("\n");
     printf("$ ");
-    fflush(stdout);
+    fflush(stdout); //limpa o buffer
 }
 
 void usage(int argc, char **argv) {
@@ -63,16 +63,13 @@ int main(int argc, char *argv[]) {
 	if (argc < 3) usage(argc, argv);
 	struct sockaddr_storage storage;
 	if (0 != addrparse(argv[1], argv[2], &storage)) usage(argc, argv);
-
     //Create socket and establish connection with server.
 	int sock;
 	sock = socket(storage.ss_family, SOCK_STREAM, 0);
 	if (sock == -1) logexit("socket");
 	struct sockaddr *addr = (struct sockaddr *)(&storage);
 	if (0 != connect(sock, addr, sizeof(storage))) logexit("connect");
-	char addrstr[BUFSZ];
-	addrtostr(addr, addrstr, BUFSZ);
-	printf("connected to %s\n", addrstr);
+    printf("Conectado ao servidor.\n");
 
     while (1) {
         GameMessage msg = {0};
@@ -91,8 +88,10 @@ int main(int argc, char *argv[]) {
         else if (msg.type == MSG_PLAY_AGAIN_REQUEST) {
             printf("Deseja jogar novamente? \n1 - Sim \n0 - Nao \n");
             int again;
+            printf("\n");
             printf("$ ");
             scanf("%d", &again);
+            printf("\n");
             msg.type = MSG_PLAY_AGAIN_RESPONSE;
             msg.result = again;
             send_message(sock, &msg);

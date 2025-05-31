@@ -1,0 +1,11 @@
+- TO RUN:
+        0. Any terminal: make
+
+        1. terminal 1: ./server v4 51551 or ./server v6 51511
+           terminal 2: ./client 127.0.0.1 51511 or ./client ::1 51511
+
+        2. Follow instructions on terminal
+
+        obs: To update binaries, makes 0 again.
+
+- R E A D Y ;)

@@ -45,14 +45,6 @@ int determine_result(int client_action, int server_action) {
     return 0;
 }
 
-void send_message(int sock, GameMessage *msg) {
-    send(sock, msg, sizeof(GameMessage), 0);
-}
-
-int receive_message(int sock, GameMessage *msg) {
-    return recv(sock, msg, sizeof(GameMessage), 0);
-}
-
 void print_action(int action, char *buf) {
     char * possible_actions[] = {
         "Nuclear Attack", 
@@ -68,9 +60,6 @@ void print_action(int action, char *buf) {
       }
 }
 
-void printf_invalid_opt(){
-    fprintf(stderr, "Erro: opção inválida de jogada.\n");
-};
 
 void usage(int argc, char **argv){
     printf("usage: %s <v4|v6> <server port>\n", argv[0]);
@@ -136,15 +125,15 @@ int main(int argc, char *argv[]) {
         GameMessage msg = {0};
         // Solicita jogada
         msg.type = MSG_REQUEST;
-        send_message(sock, &msg);
+        send(sock, &msg, sizeof(GameMessage), 0);
         // Recebe jogada
-        if (receive_message(sock, &msg) <= 0) break;
+        if ((recv(sock, &msg, sizeof(GameMessage), 0)) <= 0) break;
         fprintf(stderr, "Cliente escolheu %d.\n", msg.client_action);
         if (msg.client_action < 0 || msg.client_action > 4) {
-            printf_invalid_opt();
+            printf("Erro: opção inválida de jogada.\n");
             msg.type = MSG_ERROR;
             snprintf(msg.message, MSG_SIZE, "Por favor, selecione um valor de 0 a 4.\n");
-            send_message(sock, &msg);
+            send(sock, &msg, sizeof(GameMessage), 0);
             continue;
         }
 
@@ -176,21 +165,22 @@ int main(int argc, char *argv[]) {
         msg.server_wins = server_wins;
         fprintf(stderr, "Placar atualizado: Cliente %d x %d Servidor\n", client_wins, server_wins);
         printf("Perguntando se o cliente deseja jogar novamente.\n");
-        send_message(sock, &msg);
+        send(sock, &msg, sizeof(GameMessage), 0);
 
         if (result == -1) continue;
 
         // Plays again option choose. 
         msg.type = MSG_PLAY_AGAIN_REQUEST;
-        send_message(sock, &msg);
+        send(sock, &msg, sizeof(GameMessage), 0);
 
-        if (receive_message(sock, &msg) <= 0) break;
+
+        if ((recv(sock, &msg, sizeof(GameMessage), 0)) <= 0) break;
         printf("Solicitando ao cliente mais uma escolha.\n");
 
         if (msg.type != MSG_PLAY_AGAIN_RESPONSE || (msg.result != 0 && msg.result != 1)) {
             msg.type = MSG_ERROR;
             snprintf(msg.message, MSG_SIZE, "Por favor, digite 1 para jogar novamente ou 0 para encerrar.");
-            send_message(sock, &msg);
+            send(sock, &msg, sizeof(GameMessage), 0);
             continue;
         }
 
@@ -198,11 +188,11 @@ int main(int argc, char *argv[]) {
             printf("Cliente não deseja jogar novamente.\n");
             printf("Enviando placar final.\n");
             msg.type = MSG_END;
-            snprintf(msg.message, MSG_SIZE, "Fim de jogo!\n Placar final: Você %d x %d Servidor\n Obrigado por jogar!", client_wins, server_wins);
+            snprintf(msg.message, MSG_SIZE,"Fim de jogo!\n Placar final: Você %d x %d Servidor\n Obrigado por jogar!", client_wins, server_wins);
             msg.client_wins = client_wins;
             msg.server_wins = server_wins;
-            send_message(sock, &msg);
-         break;
+            send(sock, &msg, sizeof(GameMessage), 0);
+            break;
         }
     }
     close(sock);

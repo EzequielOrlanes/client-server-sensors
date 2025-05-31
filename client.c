@@ -31,15 +31,6 @@ typedef struct {
     char message[MSG_SIZE];
 } GameMessage;
 
-
-void send_message(int sock, GameMessage *msg) {
-    send(sock, msg, sizeof(GameMessage), 0);
-}
-
-int receive_message(int sock, GameMessage *msg) {
-    return recv(sock, msg, sizeof(GameMessage), 0);
-}
-
 void print_menu() {
     printf("Escolha sua jogada: \n");
     printf("0 - Nuclear Attack \n");
@@ -73,14 +64,15 @@ int main(int argc, char *argv[]) {
 
     while (1) {
         GameMessage msg = {0};
-        if (receive_message(sock, &msg) <= 0) break;
+        if ((recv(sock, &msg, sizeof(GameMessage), 0)) <= 0) break;
         if (msg.type == MSG_REQUEST) {
             print_menu();
             int escolha;
             scanf("%d", &escolha);
             msg.type = MSG_RESPONSE;
             msg.client_action = escolha;
-            send_message(sock, &msg);
+            send(sock, &msg, sizeof(GameMessage), 0);
+
         }
         else if (msg.type == MSG_RESULT) {
             printf("\n %s \n", msg.message);
@@ -94,7 +86,8 @@ int main(int argc, char *argv[]) {
             printf("\n");
             msg.type = MSG_PLAY_AGAIN_RESPONSE;
             msg.result = again;
-            send_message(sock, &msg);
+            send(sock, &msg, sizeof(GameMessage), 0);
+
         }
         else if (msg.type == MSG_ERROR) {
             printf("\n %s \n", msg.message);

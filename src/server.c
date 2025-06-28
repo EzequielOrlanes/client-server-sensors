@@ -6,196 +6,409 @@
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include "common.h"
+#include <math.h> 
 
 #define BUFSZ 500
-#define MSG_SIZE 256
-#define EQUAL 100
+#define MAX_PLAYERS 10
+#define BET_TIME 10
+#define MULTIPLIER_INTERVAL 10000000 // 100ms em microssegundos
 
 typedef enum {
-    MSG_REQUEST,
-    MSG_RESPONSE,
-    MSG_RESULT,
-    MSG_PLAY_AGAIN_REQUEST,
-    MSG_PLAY_AGAIN_RESPONSE,
-    MSG_ERROR,
-    MSG_END
+    MSG_START,
+    MSG_CLOSED,
+    MSG_BET,
+    MSG_CASHOUT,
+    MSG_MULTIPLIER,
+    MSG_EXPLODE,
+    MSG_PAYOUT,
+    MSG_PROFIT,
+    MSG_BYE,
+    MSG_ERROR
 } MessageType;
 
 typedef struct {
     int type;
-    int client_action;
-    int server_action;
-    int result;
-    int client_wins;
-    int server_wins;
-    char message[MSG_SIZE];
+    int player_id;
+    float value;
+    float player_profit;
+    float house_profit;
+    char message[BUFSZ];
 } GameMessage;
 
+typedef struct {
+    int id;
+    int sock;
+    pthread_t thread;
+    char nickname[14];
+    float bet;
+    float profit;
+    bool has_bet;
+    bool has_cashed_out;
+    bool active;
+} Player;
 
-int determine_result(int client_action, int server_action) {
-    if (client_action == server_action) return EQUAL;
-    switch (client_action) {
-        case 0: return (server_action == 2 || server_action == 3) ? 1 : 0;
-        case 1: return (server_action == 0 || server_action == 4) ? 1 : 0;
-        case 2: return (server_action == 1 || server_action == 3) ? 1 : 0;
-        case 3: return (server_action == 1 || server_action == 4) ? 1 : 0;
-        case 4: return (server_action == 0 || server_action == 2) ? 1 : 0;
+Player players[MAX_PLAYERS];
+int num_players = 0;
+pthread_mutex_t players_mutex = PTHREAD_MUTEX_INITIALIZER;
+float current_multiplier = 1.00;
+float explosion_point = 0.0;
+float total_bets = 0.0;
+int num_betting_players = 0;
+bool game_active = false;
+bool accepting_bets = false;
+pthread_mutex_t game_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+void broadcast_message(GameMessage *msg, bool include_inactive) {
+    pthread_mutex_lock(&players_mutex);
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        if (players[i].active || !include_inactive) {
+            send(players[i].sock, msg, sizeof(GameMessage), 0);
+        }
     }
-    return 0;
+    pthread_mutex_unlock(&players_mutex);
 }
 
-void print_action(int action, char *buf) {
-    char * possible_actions[] = {
-        "Nuclear Attack", 
-        "Intercept Attack",
-        "Cyber Attack",
-        "Drone Strike",
-        "Bio Attack"
-    };
-    if (action >= 0 && action <= 4){
-        strcpy(buf, possible_actions[action]);
+void send_message(int sock, GameMessage *msg) {
+    send(sock, msg, sizeof(GameMessage), 0);
+}
+
+void log_event(const char *event, int player_id, float multiplier, float explosion, 
+               int num_players, float total_bets, float bet, float payout, 
+               float player_profit, float house_profit) {
+    printf("event=%s | id=%d | m=%.2f | me=%.2f | N=%d |V=%.2f | bet=%.2f | payout=%.2f | player_profit=%.2f | house_profit=%.2f \n\n",
+           event, player_id, multiplier, explosion, num_players, total_bets, 
+           bet, payout, player_profit, house_profit);
+}
+
+void calculate_explosion_point() {
+    pthread_mutex_lock(&game_mutex);
+    explosion_point = sqrtf(1 + num_betting_players + 0.01 * total_bets);
+    pthread_mutex_unlock(&game_mutex);
+    log_event("closed", 0, 0.0, explosion_point, num_betting_players, total_bets, 
+              0.0, 0.0, 0.0, 0.0);
+}
+
+void *game_loop(void *arg) {
+    // Contagem regressiva para apostas
+    GameMessage msg = {0};
+    msg.type = MSG_START;
+    // snprintf(msg.message, BUFSZ, "Rodada aberta! Digite o valor da aposta ou digite [Q] para sair (%d segundos restantes)", BET_TIME);
+    broadcast_message(&msg, false);
+    log_event("start", 0, 0.0, 0.0, num_betting_players, 0.0, 0.0, 0.0, 0.0, 0.0);
+    for (int i = BET_TIME; i > 0; i--) {
+        sleep(1);
+        pthread_mutex_lock(&game_mutex);
+        if (!accepting_bets) {
+            pthread_mutex_unlock(&game_mutex);
+            break;
+        }
+        pthread_mutex_unlock(&game_mutex);
+    }
+    
+    pthread_mutex_lock(&game_mutex);
+    accepting_bets = false;
+    pthread_mutex_unlock(&game_mutex);
+    msg.type = MSG_CLOSED;
+    snprintf(msg.message, BUFSZ, "Apostas encerradas! Não é mais possível apostar nesta rodada.");    
+    broadcast_message(&msg, false);
+    calculate_explosion_point();
+
+    printf("Chegou até aqui!");
+
+    // Loop do multiplicador
+    current_multiplier = 1.00;
+    bool exploded = false;
+    while (exploded == false) {
+        printf("Entra aqui!");
+        sleep(MULTIPLIER_INTERVAL);
+        pthread_mutex_lock(&game_mutex);
+        if (!game_active) {
+            pthread_mutex_unlock(&game_mutex);
+            break;
+        }
+        current_multiplier += 0.01;
+        if (current_multiplier >= explosion_point) {
+            exploded = true;
+            game_active = false;
+        }
+        msg.type = MSG_MULTIPLIER;
+        msg.value = current_multiplier;
+        snprintf(msg.message, BUFSZ, "Multiplicador atual: %.2fx", current_multiplier);
+        pthread_mutex_unlock(&game_mutex);
+        broadcast_message(&msg, false);
+        log_event("multiplier", 0, current_multiplier, explosion_point, num_betting_players, 
+                  total_bets, 0.0, 0.0, 0.0, 0.0);
+    }
+    
+    if (exploded == true) {
+        msg.type = MSG_EXPLODE;
+        snprintf(msg.message, BUFSZ, "Aviãozinho explodiu em: %.2fx", explosion_point);
+        broadcast_message(&msg, false);
+        log_event("explode", 0, current_multiplier, explosion_point, num_betting_players, 
+                  total_bets, 0.0, 0.0, 0.0, 0.0);
+        // Processar jogadores que não fizeram cashout
+        pthread_mutex_lock(&players_mutex);
+        float house_profit = 0.0;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (players[i].active && players[i].has_bet && !players[i].has_cashed_out) {
+                players[i].profit -= players[i].bet;
+                house_profit += players[i].bet;
+                msg.type = MSG_EXPLODE;
+                msg.player_id = players[i].id;
+                msg.value = current_multiplier;
+                msg.player_profit = players[i].profit;
+                snprintf(msg.message, BUFSZ, "Você perdeu R$ %.2f. Tente novamente na próxima rodada! Aviãozinho tá pagando :)", players[i].bet);
+                send_message(players[i].sock, &msg);
+                log_event("explode", players[i].id, current_multiplier, explosion_point, 
+                          num_betting_players, total_bets, players[i].bet, 0.0, 
+                          players[i].profit, 0.0);
+                msg.type = MSG_PROFIT;
+                snprintf(msg.message, BUFSZ, "Profit atual: R$ %.2f", players[i].profit);
+                send_message(players[i].sock, &msg);
+                
+                log_event("profit", players[i].id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 
+                          players[i].profit, 0.0);
+            }
+            // Resetar para próxima rodada
+            players[i].has_bet = false;
+            players[i].has_cashed_out = false;
+        }
+        
+        msg.type = MSG_PROFIT;
+        msg.player_id = 0; // Indica casa
+        msg.house_profit = house_profit;
+        snprintf(msg.message, BUFSZ, "Profit da casa: R$ %.2f", house_profit);
+        broadcast_message(&msg, false);
+        log_event("profit", 0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, house_profit);
+        pthread_mutex_unlock(&players_mutex);
+    }
+    
+    // Preparar próxima rodada
+    pthread_mutex_lock(&game_mutex);
+    if (game_active) {
+        total_bets = 0.0;
+        num_betting_players = 0;
+        accepting_bets = true;
+        pthread_t game_thread;
+        pthread_create(&game_thread, NULL, game_loop, NULL);
+        pthread_detach(game_thread);
+    }
+    pthread_mutex_unlock(&game_mutex);
+    
+    return NULL;
+}
+
+void *handle_client(void *data) {
+    Player *player = (Player *)data;
+    GameMessage msg = {0};
+    // Enviar mensagem de boas-vindas
+    msg.type = MSG_START;
+    if (accepting_bets) {
+        snprintf(msg.message, BUFSZ, "Rodada aberta! Digite o valor da aposta ou digite [Q] para sair (%d segundos restantes)", BET_TIME);
+    } else if (game_active) {
+        snprintf(msg.message, BUFSZ, "Apostas encerradas! Não é mais possível apostar nesta rodada.");
     } else {
-            strcpy(buf, "Invalid");
-      }
+        snprintf(msg.message, BUFSZ, "Aguardando início de nova rodada...");
+    }
+    send_message(player->sock, &msg);
+
+    while (1) {
+        if (recv(player->sock, &msg, sizeof(GameMessage), 0) <= 0) break;
+        if (msg.type == MSG_BET && accepting_bets) {
+            if (msg.value <= 0) {
+                msg.type = MSG_ERROR;
+                snprintf(msg.message, BUFSZ, "Error: Invalid bet value");
+                send_message(player->sock, &msg);
+                continue;
+            }
+            
+            pthread_mutex_lock(&players_mutex);
+            player->bet = msg.value;
+            player->has_bet = true;
+            total_bets += msg.value;
+            num_betting_players++;
+            msg.type = MSG_BET;
+            pthread_mutex_unlock(&players_mutex);
+            snprintf(msg.message, BUFSZ, "Aposta recebida: R$ %.2f", msg.value);
+            send_message(player->sock, &msg);
+            log_event("bet", player->id, 0.0, 0.0, num_betting_players, total_bets, 
+                      msg.value, 0.0, 0.0, 0.0);
+            
+        } 
+        //msg.type == MSG_CASHOUT &&
+        else if (game_active && player->has_bet && !player->has_cashed_out) {
+            pthread_mutex_lock(&players_mutex);
+            float payout = player->bet * current_multiplier;
+            player->profit += (payout - player->bet);
+            player->has_cashed_out = true;
+            msg.type = MSG_CASHOUT;
+            msg.value = current_multiplier;
+            snprintf(msg.message, BUFSZ, "Você sacou em %.2fx", current_multiplier);
+            send_message(player->sock, &msg);
+            
+            log_event("cashout", player->id, current_multiplier, explosion_point, 
+                      num_betting_players, total_bets, player->bet, 0.0, 0.0, 0.0);
+            
+            msg.type = MSG_PAYOUT;
+            msg.value = payout;
+            snprintf(msg.message, BUFSZ, "Você ganhou R$ %.2f!", payout);
+            send_message(player->sock, &msg);
+            
+            log_event("payout", player->id, 0.0, 0.0, 0, 0.0, 0.0, payout, 0.0, 0.0);
+            
+            msg.type = MSG_PROFIT;
+            msg.player_profit = player->profit;
+            snprintf(msg.message, BUFSZ, "Profit atual: R$ %.2f", player->profit);
+            send_message(player->sock, &msg);
+            
+            log_event("profit", player->id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 
+                      player->profit, 0.0);
+            pthread_mutex_unlock(&players_mutex);
+        } 
+        else if (msg.type == MSG_BYE) {
+            pthread_mutex_lock(&players_mutex);
+            player->active = false;
+            pthread_mutex_unlock(&players_mutex);
+            
+            msg.type = MSG_BYE;
+            snprintf(msg.message, BUFSZ, "Aposte com responsabilidade. Volte logo, %s!", player->nickname);
+            send_message(player->sock, &msg);
+            
+            log_event("bye", player->id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            break;
+        } 
+        else {
+            msg.type = MSG_ERROR;
+            snprintf(msg.message, BUFSZ, "Error: Invalid command");
+            send_message(player->sock, &msg);
+        }
+    }
+    // close(player->sock);
+    pthread_mutex_lock(&players_mutex);
+    player->active = false;
+    num_players--;
+    pthread_mutex_unlock(&players_mutex);
+    return NULL;
 }
 
-
-void usage(int argc, char **argv){
+void usage(int argc, char **argv) {
     printf("usage: %s <v4|v6> <server port>\n", argv[0]);
     printf("example: %s v4 51511\n", argv[0]);
     exit(EXIT_FAILURE);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc < 3){
+    if (argc < 3) {
         usage(argc, argv);
     }
     struct sockaddr_storage storage;
-    if (0 != server_sockaddr_init(argv[1], argv[2], &storage)){
+    if (0 != server_sockaddr_init(argv[1], argv[2], &storage)) {
         usage(argc, argv);
     }
-
-    int sock_connect;
-    sock_connect = socket(storage.ss_family, SOCK_STREAM, 0);
-    int opt = 0;
-    setsockopt(sock_connect, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)); 
+    int sock_connect = socket(storage.ss_family, SOCK_STREAM, 0);
     if (sock_connect == -1) logexit("socket");
-
+    // Permitir reuso do endereço
     int enable = 1;
-    if (0 != setsockopt(sock_connect, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int))) logexit("setsockopt");
-
+    if (setsockopt(sock_connect, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) != 0) logexit("setsockopt");
+    // Configuração para IPv6 
+    if (storage.ss_family == AF_INET6) {
+        int opt = 0;
+        if (setsockopt(sock_connect, IPPROTO_IPV6, IPV6_V6ONLY, &opt, sizeof(opt)) != 0) {
+            logexit("setsockopt IPV6_V6ONLY");
+        }
+    }
     struct sockaddr *addr = (struct sockaddr *)(&storage);
-    if (0 != bind(sock_connect, addr, sizeof(storage))) logexit("bind");
-    if (0 != listen(sock_connect, 10)) logexit("listen");
-
+    if (bind(sock_connect, addr, sizeof(storage)) != 0) {
+        logexit("bind");
+    }
+    if (listen(sock_connect, 10) != 0) {
+        logexit("listen");
+    }
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
-    char protocol[10]; // "IPv4" ou "IPv6"
-    int port = 0;
-
-    if (addr->sa_family == AF_INET) {
-        // IPv4
-        struct sockaddr_in *addr4 = (struct sockaddr_in *)addr;
-        port = ntohs(addr4->sin_port);
-        strcpy(protocol, "IPv4");
-    } else if (addr->sa_family == AF_INET6) {
-        // IPv6
-        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)addr;
-        port = ntohs(addr6->sin6_port);
-        strcpy(protocol, "IPv6");
-    } else {
-        strcpy(protocol, "Unknown");
+    printf("Servidor iniciado em %s\n", addrstr);
+    
+    // Inicializar estrutura de jogadores
+    for (int i = 0; i < MAX_PLAYERS; i++) {
+        players[i].active = false;
+        players[i].id = i + 1;
     }
-
-    printf("Servido iniciado em modo %s, na porta %d aguardando conexão...\n", protocol, port);
-    struct sockaddr_storage cstorage;
-    struct sockaddr *caddr = (struct sockaddr *)(&cstorage);
-    socklen_t caddrlen = sizeof(cstorage);
-    int sock = accept(sock_connect, caddr, &caddrlen);
-    if (sock == -1){
-        logexit("accept");
-    }
-    printf("Cliente conectado.\n");
-    printf("Apresentando as opções para o cliente.\n");
-    int client_wins = 0; 
-    int server_wins = 0;
-
+    
+    // Iniciar jogo
+    accepting_bets = true;
+    game_active = true;
+    pthread_t game_thread;
+    pthread_create(&game_thread, NULL, game_loop, NULL);
+    pthread_detach(game_thread);
+    
+    // Loop principal para aceitar conexões
     while (1) {
-        GameMessage msg = {0};
-        // Solicita jogada
-        msg.type = MSG_REQUEST;
-        send(sock, &msg, sizeof(GameMessage), 0);
-        // Recebe jogada
-        if ((recv(sock, &msg, sizeof(GameMessage), 0)) <= 0) break;
-        fprintf(stderr, "Cliente escolheu %d.\n", msg.client_action);
-        if (msg.client_action < 0 || msg.client_action > 4) {
-            printf("Erro: opção inválida de jogada.\n");
-            msg.type = MSG_ERROR;
-            snprintf(msg.message, MSG_SIZE, "Por favor, selecione um valor de 0 a 4.\n");
-            send(sock, &msg, sizeof(GameMessage), 0);
+        struct sockaddr_storage cstorage;
+        struct sockaddr *caddr = (struct sockaddr *)(&cstorage);
+        socklen_t caddrlen = sizeof(cstorage);
+        
+        int csock = accept(sock_connect, caddr, &caddrlen);
+        if (csock == -1) {
+            perror("accept");
             continue;
         }
-
-        //select random number between 0 and 5 as server action.
-        int server_action = rand() % 5;
-        printf("Servidor escolheu aleatoriamente %d\n", server_action);
-        int result = determine_result(msg.client_action, server_action);
-
-        msg.type = MSG_RESULT;
-        msg.server_action = server_action;
-        msg.result = result;
-
-        char client_str[32], server_str[32];
-        print_action(msg.client_action, client_str);
-        print_action(server_action, server_str);
-        if (result == 1) {
-            snprintf(msg.message, MSG_SIZE,"Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Vitória!\n", client_str, server_str);
-            client_wins++;
-        } else if (result == 0) {
-            snprintf(msg.message, MSG_SIZE,"Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Derrota!\n", client_str, server_str);
-            server_wins++;
-        } else if (result == EQUAL){
-            snprintf(msg.message, MSG_SIZE,"Você escolheu: %s\n Servidor escolheu: %s\n Resultado: Empate!\n", client_str, server_str);
-        }
-
-        if(result == EQUAL) printf("Empate.\n");
-
-        msg.client_wins = client_wins;
-        msg.server_wins = server_wins;
-        fprintf(stderr, "Placar atualizado: Cliente %d x %d Servidor\n", client_wins, server_wins);
-        printf("Perguntando se o cliente deseja jogar novamente.\n");
-        send(sock, &msg, sizeof(GameMessage), 0);
-
-        if (result == -1) continue;
-
-        // Plays again option choose. 
-        msg.type = MSG_PLAY_AGAIN_REQUEST;
-        send(sock, &msg, sizeof(GameMessage), 0);
-
-
-        if ((recv(sock, &msg, sizeof(GameMessage), 0)) <= 0) break;
-        printf("Solicitando ao cliente mais uma escolha.\n");
-
-        if (msg.type != MSG_PLAY_AGAIN_RESPONSE || (msg.result != 0 && msg.result != 1)) {
-            msg.type = MSG_ERROR;
-            snprintf(msg.message, MSG_SIZE, "Por favor, digite 1 para jogar novamente ou 0 para encerrar.");
-            send(sock, &msg, sizeof(GameMessage), 0);
+        
+        // Receber nickname do cliente
+        GameMessage msg;
+        if (recv(csock, &msg, sizeof(GameMessage), 0) <= 0) {
+            close(csock);
             continue;
         }
-
-        if (msg.result == 0) {
-            printf("Cliente não deseja jogar novamente.\n");
-            printf("Enviando placar final.\n");
-            msg.type = MSG_END;
-            snprintf(msg.message, MSG_SIZE,"Fim de jogo!\n Placar final: Você %d x %d Servidor\n Obrigado por jogar!", client_wins, server_wins);
-            msg.client_wins = client_wins;
-            msg.server_wins = server_wins;
-            send(sock, &msg, sizeof(GameMessage), 0);
-            break;
+        
+        // Verificar se há espaço para novo jogador
+        pthread_mutex_lock(&players_mutex);
+        if (num_players >= MAX_PLAYERS) {
+            msg.type = MSG_ERROR;
+            snprintf(msg.message, BUFSZ, "Servidor cheio. Tente novamente mais tarde.");
+            send(csock, &msg, sizeof(GameMessage), 0);
+            close(csock);
+            pthread_mutex_unlock(&players_mutex);
+            continue;
         }
+        
+        // Encontrar slot livre
+        int player_index = -1;
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            if (!players[i].active) {
+                player_index = i;
+                break;
+            }
+        }
+        
+        if (player_index == -1) {
+            msg.type = MSG_ERROR;
+            snprintf(msg.message, BUFSZ, "Erro interno do servidor.");
+            send(csock, &msg, sizeof(GameMessage), 0);
+            close(csock);
+            pthread_mutex_unlock(&players_mutex);
+            continue;
+        }
+        
+        // Configurar novo jogador
+        players[player_index].sock = csock;
+        players[player_index].active = true;
+        players[player_index].has_bet = false;
+        players[player_index].has_cashed_out = false;
+        players[player_index].profit = 0.0;
+        strncpy(players[player_index].nickname, msg.message, 13);
+        players[player_index].nickname[13] = '\0';
+        num_players++;
+        pthread_mutex_unlock(&players_mutex);
+        // Criar thread para o cliente
+        pthread_create(&players[player_index].thread, NULL, handle_client, &players[player_index]);
+        pthread_detach(players[player_index].thread);
+        
+        printf("Novo cliente conectado: %s (ID: %d)\n", players[player_index].nickname, players[player_index].id);
     }
-    close(sock);
-    printf("Cliente desconectado.\n");
+    
+    close(sock_connect);
     return 0;
 }

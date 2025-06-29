@@ -179,7 +179,6 @@ while (running) {
         char input[BUFSZ];
         if (fgets(input, BUFSZ, stdin) == NULL) continue;
         input[strcspn(input, "\n")] = '\0';
-        
         if (strcmp(input, "C") == 0 || strcmp(input, "c") == 0) {
             msg.type = MSG_CASHOUT;
             send(sock, &msg, sizeof(GameMessage), 0);
@@ -188,8 +187,6 @@ while (running) {
         else if (strcmp(input, "Q") == 0 || strcmp(input, "q") == 0) {
             msg.type = MSG_BYE;
             send(sock, &msg, sizeof(GameMessage), 0);
-            // running = false;
-            flag_cashout = true;
         }
     }
     

@@ -216,6 +216,7 @@ void *handle_client(void *data) {
     Player *player = (Player *)data;
     GameMessage msg = {0};
     // Enviar mensagem de boas-vindas
+
     msg.type = MSG_START;
     if (accepting_bets) {
         snprintf(msg.message, BUFSZ, "Rodada aberta! Digite o valor da aposta ou digite [Q] para sair (%d segundos restantes)", BET_TIME);

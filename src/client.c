@@ -7,6 +7,9 @@
 #include <stdbool.h>
 #include "common.h"
 #include <pthread.h>
+#include <sys/select.h>  
+#include <unistd.h>      
+
 #define BUFSZ 500
 typedef enum {
     MSG_START,
@@ -79,6 +82,7 @@ int main(int argc, char *argv[]) {
     bool can_bet = false;
     bool can_cashout = false;
     bool has_bet = false;
+    bool flag_cashout = false;
 while (running) {
     if (recv(sock, &msg, sizeof(GameMessage), 0) <= 0) {
         printf("Conexão com o servidor perdida.\n");
@@ -98,24 +102,35 @@ while (running) {
             if (has_bet) {   // Só mostra cashout se apostou
                 printf("\nDigite [C] para sacar\n");
                 can_cashout = true;
+                continue;
             }
             break;
         case MSG_BET:
             printf("\n%s\n", msg.message);
             break;
         case MSG_MULTIPLIER:
-            printf("\nMultiplicador atual: %.2fx\n", msg.value); // Formate melhor esta mensagem
+            printf("\nMultiplicador atual: %.2fx\n", msg.value);
+            can_cashout = true;
+            if (flag_cashout == true){
+                break;
+            } else {
+                  goto q;
+            }
+            break;
+        case MSG_CASHOUT:
+            printf("\n%s\n", msg.message);
+            can_cashout = false;
             break;
         case MSG_EXPLODE:
             printf("\n%s\n", msg.message);
             can_cashout = false;
-            break;
+            continue;
         case MSG_PAYOUT:
             printf("\n%s\n", msg.message);
-            break;
+            continue;
         case MSG_PROFIT:
             printf("\n%s\n", msg.message);
-            break;
+            continue;
         case MSG_BYE:
             printf("\n%s\n", msg.message);
             running = false;
@@ -124,8 +139,7 @@ while (running) {
             printf("\n%s\n", msg.message);
             break;
         default:
-            // printf("\nMensagem desconhecida recebida do servidor.\n");
-            break;
+            continue;
     }
 }
     // Processar entrada do usuário APENAS se for o momento certo
@@ -156,27 +170,35 @@ while (running) {
             }
         }
     }
-    else if (can_cashout) {
-        fflush(stdout);
+    q:
+    if (can_cashout && can_bet == false) {
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(STDIN_FILENO, &fds);
+    // Timeout = 0 (não espera)
+    struct timeval timeout = {0, 0};
+    // Verifica se tem algo para ler
+    if (select(1, &fds, NULL, NULL, &timeout) > 0) {
         char input[BUFSZ];
-        if (fgets(input, BUFSZ, stdin) == NULL) {
-            break;
-        }
-        input[strcspn(input, "\n")] = '\0';
+        if (fgets(input, BUFSZ, stdin) == NULL) continue;
+        input[strcspn(input, "\n")] = '\0';  // Remove o \n
         
-        if (strcmp(input, "C") == 0) {
+        if (strcmp(input, "C") == 0 || strcmp(input, "c") == 0) {
             msg.type = MSG_CASHOUT;
             send(sock, &msg, sizeof(GameMessage), 0);
         }
-        else if (strcmp(input, "Q") == 0) {
+        else if (strcmp(input, "Q") == 0 || strcmp(input, "q") == 0) {
             msg.type = MSG_BYE;
             send(sock, &msg, sizeof(GameMessage), 0);
             running = false;
+            flag_cashout = true;
             break;
         }
-        else {
-            printf("Comando inválido.\n");
-        }
+        // else {
+        //     printf("Comando inválido. Use [C] ou [Q].\n");
+        // }
+    }
+    
     }
 }
     close(sock);

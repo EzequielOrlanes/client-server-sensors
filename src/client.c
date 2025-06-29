@@ -97,19 +97,19 @@ while (running) {
             has_bet = false;
             break;
         case MSG_CLOSED:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             can_bet = false; // Desativa novas apostas
             if (has_bet) {   // Só mostra cashout se apostou
-                printf("\nDigite [C] para sacar\n");
+                printf("\nDigite [C] para sacar");
                 can_cashout = true;
                 continue;
             }
             break;
         case MSG_BET:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             break;
         case MSG_MULTIPLIER:
-            printf("\nMultiplicador atual: %.2fx\n", msg.value);
+            printf("\nMultiplicador atual: %.2fx", msg.value);
             can_cashout = true;
             if (flag_cashout == true){
                 break;
@@ -118,25 +118,25 @@ while (running) {
             }
             break;
         case MSG_CASHOUT:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             can_cashout = false;
             continue;
         case MSG_EXPLODE:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             can_cashout = false;
             continue;
         case MSG_PAYOUT:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             continue;
         case MSG_PROFIT:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             continue;
         case MSG_BYE:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             running = false;
             break;
         case MSG_ERROR:
-            printf("\n%s\n", msg.message);
+            printf("\n%s", msg.message);
             break;
         default:
             continue;
@@ -144,7 +144,6 @@ while (running) {
 }
     // Processar entrada do usuário APENAS se for o momento certo
     if (can_bet && has_bet == false ) {
-        printf("\n$");
         fflush(stdout);
         char input[BUFSZ];
         if (fgets(input, BUFSZ, stdin) == NULL) {
@@ -155,12 +154,12 @@ while (running) {
             msg.type = MSG_BYE;
             send(sock, &msg, sizeof(GameMessage), 0);
             running = false;
-            break;
+            continue;
         } 
         else {
             float bet = atof(input);
             if (bet <= 0) {
-                printf("Error: Valor de aposta inválido\n");
+                printf("Error: Valor de aposta inválido");
             } else {
                 msg.type = MSG_BET;
                 msg.value = bet;
@@ -189,9 +188,8 @@ while (running) {
         else if (strcmp(input, "Q") == 0 || strcmp(input, "q") == 0) {
             msg.type = MSG_BYE;
             send(sock, &msg, sizeof(GameMessage), 0);
-            running = false;
+            // running = false;
             flag_cashout = true;
-            break;
         }
     }
     

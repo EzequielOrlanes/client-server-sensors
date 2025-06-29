@@ -60,6 +60,7 @@ int num_betting_players = 0;
 bool game_active = false;
 bool accepting_bets = false;
 float house_profit = 0.0;
+bool exploded_yet = false;
 pthread_mutex_t game_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 //funções de comunicação com o cliente. 
@@ -106,7 +107,6 @@ void *game_loop(void *arg) {
     // Contagem regressiva para apostas
     GameMessage msg = {0};
     msg.type = MSG_START;
-    // snprintf(msg.message, BUFSZ, "Rodada aberta! Digite o valor da aposta ou digite [Q] para sair (%d segundos restantes)", BET_TIME);
     broadcast_message(&msg, false);
     log_event("start", 0, 0.0, 0.0, num_betting_players, 0.0, 0.0, 0.0, 0.0, 0.0);
     for (int i = BET_TIME; i > 0; i--) {
@@ -143,18 +143,18 @@ void *game_loop(void *arg) {
         msg.type = MSG_MULTIPLIER;
         msg.value = current_multiplier;
         snprintf(msg.message, BUFSZ, "Multiplicador atual: %.2fx", current_multiplier);
-        pthread_mutex_unlock(&game_mutex);
         broadcast_message(&msg, false);
         log_event("multiplier", 0, current_multiplier, explosion_point, num_betting_players, 
                   total_bets, 0.0, 0.0, 0.0, house_profit);
-        
+        pthread_mutex_unlock(&game_mutex);
     }
-    
- while(exploded == true) {
+
+ if(exploded == true) {
+    pthread_mutex_lock(&game_mutex);
     pthread_mutex_lock(&players_mutex);
     int cont = 0;
-        for (int i = 0; i < num_betting_players; i++) {
-            sleep(1);
+        for (int i = 0; i < MAX_PLAYERS; i++) {
+            float total_losses = 0.0;
             // Apenas processa se o jogador estiver ativo
             if (players[i].active == false) {
                 players[i].has_bet = false;
@@ -165,52 +165,50 @@ void *game_loop(void *arg) {
             if (players[i].has_bet && players[i].has_cashed_out == false ) {
                 cont++;
                 players[i].profit -= players[i].bet;
-                float total_losses = 0.0;
                 for (int i = 0; i < num_betting_players; i++) {
                     if (players[i].has_bet && !players[i].has_cashed_out && players[i].active) {
                     total_losses += players[i].bet;
                     }
                 }
+            }
                 house_profit += total_losses; 
                 msg.type = MSG_EXPLODE;
                 msg.player_id = players[i].id;
                 msg.value = current_multiplier;
                 msg.player_profit = players[i].profit;
-                snprintf(msg.message, BUFSZ, "Você perdeu R$ %.2f. Tente novamente na próxima rodada! Aviãozinho tá pagando :)", players[i].bet);
+                snprintf(msg.message, BUFSZ, "Você perdeu R$ %.2f.\nTente novamente na próxima rodada! Aviãozinho tá pagando :)", players[i].bet);
                 send_message(players[i].sock, &msg);
-                log_event("explode", players[i].id, current_multiplier, explosion_point,
-                num_betting_players, total_bets, players[i].bet, 0.0, players[i].profit, 0);
+                log_event("explode", players[i].id, current_multiplier, explosion_point,num_betting_players, total_bets, players[i].bet, 0.0, players[i].profit, 0);
                 msg.type = MSG_PROFIT;
                 snprintf(msg.message, BUFSZ, "Profit atual: R$ %.2f", players[i].profit);
                 send_message(players[i].sock, &msg);
-            }
-        }
-        exploded = false;
-        pthread_mutex_unlock(&players_mutex);
-        break;
-       
-    }
 
-         msg.type = MSG_PROFIT;
+        }
+        msg.type = MSG_PROFIT;
         msg.player_id = 0; // Indica a casa
         msg.house_profit = house_profit;
         snprintf(msg.message, BUFSZ, "Profit da casa: R$ %.2f", house_profit);
         broadcast_message(&msg, false);
         log_event("profit", 0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, house_profit);
         game_active = true;
-        sleep(3);
+        exploded_yet = true;
+        pthread_mutex_unlock(&players_mutex);
+        pthread_mutex_unlock(&game_mutex);
+    }
 
     // Preparar próxima rodada
-    pthread_mutex_lock(&game_mutex);
-    if (game_active == true) {
+    if (game_active == true && exploded_yet == true) {
+        pthread_mutex_lock(&game_mutex);
         total_bets = 0.0;
         num_betting_players = 0;
         accepting_bets = true;
         pthread_t game_thread;
         pthread_create(&game_thread, NULL, game_loop, NULL);
         pthread_detach(game_thread);
+        pthread_mutex_unlock(&game_mutex);
+    }else{
+        accepting_bets = false;
     }
-    pthread_mutex_unlock(&game_mutex);
     return NULL;
 }
 
@@ -283,7 +281,8 @@ void *handle_client(void *data) {
             snprintf(msg.message, BUFSZ, "Aposte com responsabilidade. Volte logo, %s!", player->nickname);
             send_message(player->sock, &msg);
             log_event("bye", player->id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, house_profit);
-            break;
+            printf("Encerrando servidor.");
+            return 0;
         } 
         else {
             msg.type = MSG_ERROR;

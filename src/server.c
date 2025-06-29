@@ -14,7 +14,7 @@
 #define BUFSZ 500
 #define MAX_PLAYERS 10
 #define BET_TIME 10
-#define MULTIPLIER_INTERVAL 0.6 //segundos
+#define MULTIPLIER_INTERVAL 1 //segundos
 
 typedef enum {
     MSG_START,
@@ -49,7 +49,7 @@ typedef struct {
     bool has_cashed_out;
     bool active;
 } Player;
-
+//variaveis que precisam ser globais.
 Player players[MAX_PLAYERS];
 int num_players = 0;
 pthread_mutex_t players_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -59,9 +59,10 @@ float total_bets = 0.0;
 int num_betting_players = 0;
 bool game_active = false;
 bool accepting_bets = false;
-float house_profit =0.0;
+float house_profit = 0.0;
 pthread_mutex_t game_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+//funções de comunicação com o cliente. 
 void broadcast_message(GameMessage *msg, bool include_inactive) {
     pthread_mutex_lock(&players_mutex);
     for (int i = 0; i < MAX_PLAYERS; i++) {
@@ -79,10 +80,19 @@ void send_message(int sock, GameMessage *msg) {
 void log_event(const char *event, int player_id, float multiplier, float explosion, 
                int num_players, float total_bets, float bet, float payout, 
                float player_profit, float house_profit) {
-    printf("event=%s | id=%d | m=%.2f | me=%.2f | N=%d |V=%.2f | bet=%.2f | payout=%.2f | player_profit=%.2f | house_profit=%.2f \n\n",
-           event, player_id, multiplier, explosion, num_players, total_bets, 
-           bet, payout, player_profit, house_profit);
+    printf("event=%s", event);
+    if (player_id != 0) printf(" | id=%d", player_id);
+    if (multiplier != 0.0f) printf(" | m=%.2f", multiplier);
+    if (explosion != 0.0f) printf(" | me=%.2f", explosion);
+    if (num_players != 0) printf(" | N=%d", num_players);
+    if (total_bets != 0.0f) printf(" | V=%.2f", total_bets);
+    if (bet != 0.0f) printf(" | bet=%.2f", bet);
+    if (payout != 0.0f) printf(" | payout=%.2f", payout);
+    if (player_profit != 0.0f) printf(" | player_profit=%.2f", player_profit);
+    if (house_profit != 0.0f) printf(" | house_profit=%.2f", house_profit);
+    printf("\n\n");
 }
+
 
 void calculate_explosion_point() {
     pthread_mutex_lock(&game_mutex);
@@ -136,34 +146,32 @@ void *game_loop(void *arg) {
         pthread_mutex_unlock(&game_mutex);
         broadcast_message(&msg, false);
         log_event("multiplier", 0, current_multiplier, explosion_point, num_betting_players, 
-                  total_bets, 0.0, 0.0, 0.0, 0.0);
+                  total_bets, 0.0, 0.0, 0.0, house_profit);
         
     }
     
- if (exploded == true) {
-        msg.type = MSG_EXPLODE;
-        snprintf(msg.message, BUFSZ, "Aviãozinho explodiu em: %.2fx", explosion_point);
-        broadcast_message(&msg, false);
-        log_event("explode", 0, current_multiplier, explosion_point, num_betting_players,
-        total_bets, 0.0, 0.0, 0.0, 0.0);
-        // Processar jogadores que não fizeram cashout
-        pthread_mutex_lock(&players_mutex);
-
-        for (int i = 0; i < MAX_PLAYERS; i++) {
+ while(exploded == true) {
+    pthread_mutex_lock(&players_mutex);
+    int cont = 0;
+        for (int i = 0; i < num_betting_players; i++) {
+            sleep(1);
             // Apenas processa se o jogador estiver ativo
-            if (!players[i].active) {
-                // Se o jogador não estiver ativo, não precisamos fazer mais nada para ele
-                // nesta iteração, mas ainda precisamos limpar os estados caso ele estivesse ativo
-                // e foi desativado em outro lugar.
+            if (players[i].active == false) {
                 players[i].has_bet = false;
                 players[i].has_cashed_out = false;
                 continue;
             }
-
             // Lógica para jogadores que perderam
             if (players[i].has_bet && players[i].has_cashed_out == false ) {
+                cont++;
                 players[i].profit -= players[i].bet;
-                house_profit += players[i].bet;
+                float total_losses = 0.0;
+                for (int i = 0; i < num_betting_players; i++) {
+                    if (players[i].has_bet && !players[i].has_cashed_out && players[i].active) {
+                    total_losses += players[i].bet;
+                    }
+                }
+                house_profit += total_losses; 
                 msg.type = MSG_EXPLODE;
                 msg.player_id = players[i].id;
                 msg.value = current_multiplier;
@@ -171,29 +179,27 @@ void *game_loop(void *arg) {
                 snprintf(msg.message, BUFSZ, "Você perdeu R$ %.2f. Tente novamente na próxima rodada! Aviãozinho tá pagando :)", players[i].bet);
                 send_message(players[i].sock, &msg);
                 log_event("explode", players[i].id, current_multiplier, explosion_point,
-                num_betting_players, total_bets, players[i].bet, 0.0, players[i].profit, 0.0);
+                num_betting_players, total_bets, players[i].bet, 0.0, players[i].profit, 0);
                 msg.type = MSG_PROFIT;
                 snprintf(msg.message, BUFSZ, "Profit atual: R$ %.2f", players[i].profit);
                 send_message(players[i].sock, &msg);
-                log_event("profit", players[i].id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, players[i].profit, house_profit);
             }
-            // Importante: resetar o estado de aposta e cashout para *todos* os jogadores ativos
-            // para a próxima rodada. Isso deve ser feito para todos os jogadores que
-            // tiveram a chance de apostar nesta rodada.
-            players[i].has_bet = false;
-            players[i].has_cashed_out = false;
         }
+        exploded = false;
+        pthread_mutex_unlock(&players_mutex);
+        break;
+       
+    }
 
-        printf("Vem até aqui!");
-        msg.type = MSG_PROFIT;
+         msg.type = MSG_PROFIT;
         msg.player_id = 0; // Indica a casa
         msg.house_profit = house_profit;
         snprintf(msg.message, BUFSZ, "Profit da casa: R$ %.2f", house_profit);
         broadcast_message(&msg, false);
         log_event("profit", 0, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, house_profit);
         game_active = true;
-        pthread_mutex_unlock(&players_mutex);
-    }
+        sleep(3);
+
     // Preparar próxima rodada
     pthread_mutex_lock(&game_mutex);
     if (game_active == true) {
@@ -249,7 +255,7 @@ void *handle_client(void *data) {
             float payout = player->bet * current_multiplier;
             player->profit += (payout - player->bet);
             player->has_cashed_out = true;
-            house_profit -= (payout - player->bet); 
+            house_profit -= payout;
             msg.type = MSG_CASHOUT;
             msg.value = current_multiplier;
             snprintf(msg.message, BUFSZ, "Você sacou em %.2fx", current_multiplier);
@@ -276,7 +282,7 @@ void *handle_client(void *data) {
             msg.type = MSG_BYE;
             snprintf(msg.message, BUFSZ, "Aposte com responsabilidade. Volte logo, %s!", player->nickname);
             send_message(player->sock, &msg);
-            log_event("bye", player->id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, 0.0);
+            log_event("bye", player->id, 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0, house_profit);
             break;
         } 
         else {
@@ -398,7 +404,6 @@ int main(int argc, char *argv[]) {
         // Criar thread para o cliente
         pthread_create(&players[player_index].thread, NULL, handle_client, &players[player_index]);
         pthread_detach(players[player_index].thread);
-        printf("Novo cliente conectado: %s (ID: %d)\n", players[player_index].nickname, players[player_index].id);
     }
     close(sock_connect);
     return 0;

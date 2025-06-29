@@ -120,7 +120,7 @@ while (running) {
         case MSG_CASHOUT:
             printf("\n%s\n", msg.message);
             can_cashout = false;
-            break;
+            continue;
         case MSG_EXPLODE:
             printf("\n%s\n", msg.message);
             can_cashout = false;
@@ -151,7 +151,6 @@ while (running) {
             break;
         }
         input[strcspn(input, "\n")] = '\0';
-        
         if (strcmp(input, "Q") == 0) {
             msg.type = MSG_BYE;
             send(sock, &msg, sizeof(GameMessage), 0);
@@ -175,17 +174,17 @@ while (running) {
     fd_set fds;
     FD_ZERO(&fds);
     FD_SET(STDIN_FILENO, &fds);
-    // Timeout = 0 (não espera)
     struct timeval timeout = {0, 0};
     // Verifica se tem algo para ler
     if (select(1, &fds, NULL, NULL, &timeout) > 0) {
         char input[BUFSZ];
         if (fgets(input, BUFSZ, stdin) == NULL) continue;
-        input[strcspn(input, "\n")] = '\0';  // Remove o \n
+        input[strcspn(input, "\n")] = '\0';
         
         if (strcmp(input, "C") == 0 || strcmp(input, "c") == 0) {
             msg.type = MSG_CASHOUT;
             send(sock, &msg, sizeof(GameMessage), 0);
+            continue;
         }
         else if (strcmp(input, "Q") == 0 || strcmp(input, "q") == 0) {
             msg.type = MSG_BYE;
@@ -194,9 +193,6 @@ while (running) {
             flag_cashout = true;
             break;
         }
-        // else {
-        //     printf("Comando inválido. Use [C] ou [Q].\n");
-        // }
     }
     
     }

@@ -334,9 +334,6 @@ int main(int argc, char *argv[]) {
     }
     char addrstr[BUFSZ];
     addrtostr(addr, addrstr, BUFSZ);
-    printf("Servidor iniciado em %s\n", addrstr);
-    
-    // Inicializar estrutura de jogadores
     for (int i = 0; i < MAX_PLAYERS; i++) {
         players[i].active = false;
         players[i].id = i + 1;
